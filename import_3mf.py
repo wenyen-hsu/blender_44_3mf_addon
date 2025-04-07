@@ -141,7 +141,16 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 self.read_objects(root)
                 self.build_items(root, scale_unit)
 
-        scene_metadata.store(bpy.context.scene)
+        # 避免在場景元數據中保存Title，防止None值錯誤
+        if "Title" in scene_metadata.metadata:
+            del scene_metadata.metadata["Title"]
+            
+        # 安全地保存其餘元數據
+        try:
+            scene_metadata.store(bpy.context.scene)
+        except Exception as e:
+            log.warning(f"Error storing metadata to scene: {str(e)}")
+        
         annotations.store()
 
         # Zoom the camera to view the imported objects.

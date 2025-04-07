@@ -145,21 +145,56 @@ class Metadata:
         :param blender_object: The Blender object to store the metadata in.
         """
         for metadata_entry in self.values():
-            name = metadata_entry.name
-            value = metadata_entry.value
-            if name == "Title":  # Has a built-in ID property for objects as well as scenes.
-                if value is not None:
-                    blender_object.name = value
-            elif name == "3mf:partnumber":
-                # Special case: This is always a string and doesn't need the preserve attribute. We can simplify this to
-                # make it easier to edit.
-                blender_object[name] = value
-            else:
-                blender_object[name] = {
-                    "datatype": metadata_entry.datatype,
-                    "preserve": metadata_entry.preserve,
-                    "value": value,
-                }
+            try:
+                name = metadata_entry.name
+                value = metadata_entry.value
+                
+                # Title handling
+                if name == "Title":  # Has a built-in ID property for objects as well as scenes.
+                    try:
+                        # Extra safety checks for name value
+                        if value is not None and isinstance(value, str) and value.strip() != "":
+                            blender_object.name = value
+                    except (TypeError, ValueError, AttributeError):
+                        # Skip if any error occurs during name assignment
+                        pass
+                
+                # Partner number handling
+                elif name == "3mf:partnumber":
+                    # Special case: This is always a string and doesn't need the preserve attribute. We can simplify this to
+                    # make it easier to edit.
+                    try:
+                        if value is not None:
+                            blender_object[name] = str(value)  # Convert to string for safety
+                    except (TypeError, ValueError):
+                        # Skip if any error occurs
+                        pass
+                
+                # All other metadata
+                else:
+                    try:
+                        # Convert None or invalid values to empty string
+                        safe_value = ""
+                        if value is not None:
+                            try:
+                                if isinstance(value, (str, int, float, bool)):
+                                    safe_value = value
+                                else:
+                                    safe_value = str(value)
+                            except:
+                                safe_value = ""
+                                
+                        blender_object[name] = {
+                            "datatype": metadata_entry.datatype or "",
+                            "preserve": bool(metadata_entry.preserve),
+                            "value": safe_value,
+                        }
+                    except:
+                        # Skip if any error occurs
+                        pass
+            except:
+                # Skip entire metadata entry if any top-level error occurs
+                continue
 
     def retrieve(self, blender_object):
         """
