@@ -60,11 +60,11 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
     global_scale: bpy.props.FloatProperty(name="Scale", default=1.0, soft_min=0.001, soft_max=1000.0, min=1e-6, max=1e6)
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         """
         Initializes the importer with empty fields.
         """
-        super().__init__()
+        super().__init__(*args, **kwargs)
         self.resource_objects = {}  # Dictionary mapping resource IDs to ResourceObjects.
 
         # Dictionary mapping resource IDs to dictionaries mapping indexes to ResourceMaterial objects.

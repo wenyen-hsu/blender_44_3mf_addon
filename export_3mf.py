@@ -68,11 +68,11 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         min=0,
         max=12)
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         """
         Initialize some fields with defaults before starting.
         """
-        super().__init__()
+        super().__init__(*args, **kwargs)
         self.next_resource_id = 1  # Which resource ID to generate for the next object.
         self.num_written = 0  # How many objects we've written to the file.
         self.material_resource_id = -1  # We write one material. This is the resource ID of that material.
