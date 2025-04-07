@@ -39,6 +39,12 @@ This add-on has been updated to be compatible with Blender 4.4+. It addresses th
 
 - Updated initialization of operator classes to properly pass arguments to parent classes
 - Support for Blender 3.2+ view context handling
+- Fixed metadata handling to prevent TypeError when metadata contains None values (v1.1.0)
+
+### Bugfixes
+
+#### v1.1.0
+- Fixed an issue where importing 3MF files would fail with `TypeError: bpy_struct: item.attr = val: Scene.name doesn't support None from string types` by adding a null check before setting object names from metadata
 
 ## License
 
