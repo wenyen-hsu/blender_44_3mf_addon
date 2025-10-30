@@ -80,6 +80,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         self.material_name_to_index = {}  # For each material in Blender, the index in the 3MF materials group.
         self.texture_to_resource_id = {}  # Map from Blender image to texture2d resource ID.
         self.material_to_texture_group_id = {}  # Map from material to texture2dgroup resource ID.
+        self.uv_to_index = {}  # Map from UV coordinates to texture2dgroup index.
 
     def execute(self, context):
         """
@@ -95,6 +96,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         self.num_written = 0
         self.texture_to_resource_id = {}
         self.material_to_texture_group_id = {}
+        self.uv_to_index = {}
 
         archive = self.create_archive(self.filepath)
         if archive is None:
@@ -343,14 +345,9 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                             f"{{{MODEL_NAMESPACE}}}contenttype": content_type
                         })
                 
-                # Create texture2dgroup for this material (will be populated with UV coords later)
-                # For now, we just mark that this material has textures
-                texture_group_id = str(self.next_resource_id)
-                self.next_resource_id += 1
-                self.material_to_texture_group_id[material.name] = (
-                    texture_group_id, 
-                    self.texture_to_resource_id[texture_image]
-                )
+                # Mark that this material has textures (texture2dgroups will be created per-mesh)
+                # Store the texture2d ID for later use
+                self.material_to_texture_group_id[material.name] = self.texture_to_resource_id[texture_image]
 
     def write_objects(self, root, resources_element, blender_objects, global_scale, archive):
         """
@@ -504,7 +501,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 # Check if this material has textures
                 if most_common_material.name in self.material_to_texture_group_id:
                     has_textures = True
-                    texture_group_id, texture2d_id = self.material_to_texture_group_id[most_common_material.name]
+                    texture2d_id = self.material_to_texture_group_id[most_common_material.name]
                 else:
                     # We always only write one group of materials. The resource ID was determined when it was written.
                     object_element.attrib[f"{{{MODEL_NAMESPACE}}}pid"] = str(self.material_resource_id)
@@ -514,6 +511,10 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             
             # If textures are present, write texture2dgroup with UV coordinates
             if has_textures and mesh.uv_layers:
+                # Allocate a new texture2dgroup ID for this mesh
+                texture_group_id = str(self.next_resource_id)
+                self.next_resource_id += 1
+                
                 uv_layer = mesh.uv_layers.active or mesh.uv_layers[0]
                 texture_group_element = self.write_texture2dgroup(
                     resources_element, 
