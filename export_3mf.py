@@ -516,24 +516,34 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 self.next_resource_id += 1
                 
                 uv_layer = mesh.uv_layers.active or mesh.uv_layers[0]
-                texture_group_element = self.write_texture2dgroup(
+                texture_group_element, has_uv_coords = self.write_texture2dgroup(
                     resources_element, 
                     texture_group_id, 
                     texture2d_id, 
                     mesh, 
                     uv_layer
                 )
-                # Set object to use the texture2dgroup as property
-                object_element.attrib[f"{{{MODEL_NAMESPACE}}}pid"] = texture_group_id
-                object_element.attrib[f"{{{MODEL_NAMESPACE}}}pindex"] = "0"
                 
-                # Write triangles with texture coordinates
-                self.write_triangles_with_textures(
-                    mesh_element,
-                    mesh.loop_triangles,
-                    most_common_material_list_index,
-                    blender_object.material_slots,
-                    uv_layer)
+                # Only use texture2dgroup if we actually have UV coordinates
+                if has_uv_coords:
+                    # Set object to use the texture2dgroup as property
+                    object_element.attrib[f"{{{MODEL_NAMESPACE}}}pid"] = texture_group_id
+                    object_element.attrib[f"{{{MODEL_NAMESPACE}}}pindex"] = "0"
+                    
+                    # Write triangles with texture coordinates
+                    self.write_triangles_with_textures(
+                        mesh_element,
+                        mesh.loop_triangles,
+                        most_common_material_list_index,
+                        blender_object.material_slots,
+                        uv_layer)
+                else:
+                    # Fall back to regular material export
+                    self.write_triangles(
+                        mesh_element,
+                        mesh.loop_triangles,
+                        most_common_material_list_index,
+                        blender_object.material_slots)
             else:
                 # Write triangles without textures (original behavior)
                 self.write_triangles(
@@ -660,7 +670,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         :param texture_id: The resource ID of the texture2d this group refers to.
         :param mesh: The mesh to extract UV coordinates from.
         :param uv_layer: The UV layer to use.
-        :return: The created texture2dgroup element.
+        :return: A tuple of (texture2dgroup_element, has_uv_coords).
         """
         texture2dgroup_element = xml.etree.ElementTree.SubElement(
             resources_element,
@@ -694,7 +704,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         # Store the UV mapping for use in write_triangles_with_textures
         self.uv_to_index = uv_to_index
         
-        return texture2dgroup_element
+        return texture2dgroup_element, len(uv_to_index) > 0
 
     def write_triangles_with_textures(self, mesh_element, triangles, object_material_list_index, material_slots, uv_layer):
         """
