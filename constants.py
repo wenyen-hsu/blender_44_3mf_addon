@@ -36,10 +36,13 @@ MODEL_MIMETYPE = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"  # MIM
 
 # Constants in the 3D model file.
 MODEL_NAMESPACE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+MATERIAL_NAMESPACE = "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
 MODEL_NAMESPACES = {
-    "3mf": MODEL_NAMESPACE
+    "3mf": MODEL_NAMESPACE,
+    "m": MATERIAL_NAMESPACE
 }
 MODEL_DEFAULT_UNIT = "millimeter"  # If the unit is missing, it will be this.
+TEXTURE_FOLDER = "3D/Textures"  # Folder for texture images.
 
 # Constants in the ContentTypes file.
 CONTENT_TYPES_NAMESPACE = "http://schemas.openxmlformats.org/package/2006/content-types"

@@ -20,6 +20,7 @@ import collections  # Counter, to find the most common material of an object.
 import itertools
 import logging  # To debug and log progress.
 import mathutils  # For the transformation matrices.
+import os  # For path operations with texture files.
 import xml.etree.ElementTree  # To write XML documents with the 3D model data.
 import zipfile  # To write zip archives, the shell of the 3MF file.
 
@@ -77,6 +78,8 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         self.num_written = 0  # How many objects we've written to the file.
         self.material_resource_id = -1  # We write one material. This is the resource ID of that material.
         self.material_name_to_index = {}  # For each material in Blender, the index in the 3MF materials group.
+        self.texture_to_resource_id = {}  # Map from Blender image to texture2d resource ID.
+        self.material_to_texture_group_id = {}  # Map from material to texture2dgroup resource ID.
 
     def execute(self, context):
         """
@@ -90,6 +93,8 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         self.next_resource_id = 1  # Starts counting at 1 for some inscrutable reason.
         self.material_resource_id = -1
         self.num_written = 0
+        self.texture_to_resource_id = {}
+        self.material_to_texture_group_id = {}
 
         archive = self.create_archive(self.filepath)
         if archive is None:
@@ -106,14 +111,17 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         # Bug: https://bugs.python.org/issue17088
         # Workaround: https://stackoverflow.com/questions/4997848/4999510#4999510
         root = xml.etree.ElementTree.Element(f"{{{MODEL_NAMESPACE}}}model")
+        # Add material namespace if there are textures
+        root.set(f"xmlns:m", MATERIAL_NAMESPACE)
 
         scene_metadata = Metadata()
         scene_metadata.retrieve(bpy.context.scene)
         self.write_metadata(root, scene_metadata)
 
         resources_element = xml.etree.ElementTree.SubElement(root, f"{{{MODEL_NAMESPACE}}}resources")
+        self.write_textures(resources_element, blender_objects, archive)
         self.material_name_to_index = self.write_materials(resources_element, blender_objects)
-        self.write_objects(root, resources_element, blender_objects, global_scale)
+        self.write_objects(root, resources_element, blender_objects, global_scale, archive)
 
         document = xml.etree.ElementTree.ElementTree(root)
         with archive.open(MODEL_LOCATION, 'w', force_zip64=True) as f:
@@ -251,13 +259,107 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
 
         return name_to_index
 
-    def write_objects(self, root, resources_element, blender_objects, global_scale):
+    def write_textures(self, resources_element, blender_objects, archive):
+        """
+        Write texture resources to the 3MF document and save texture images to the archive.
+        
+        This creates texture2d resources for each unique texture image found in the materials,
+        and texture2dgroup resources that map UV coordinates to those textures.
+        :param resources_element: A <resources> node from a 3MF document.
+        :param blender_objects: A list of Blender objects that may have textured materials.
+        :param archive: The zip archive to write texture image files to.
+        """
+        for blender_object in blender_objects:
+            if blender_object.type != 'MESH':
+                continue
+                
+            for material_slot in blender_object.material_slots:
+                material = material_slot.material
+                if material is None or not material.use_nodes:
+                    continue
+                
+                # Skip if we've already processed this material
+                if material.name in self.material_to_texture_group_id:
+                    continue
+                
+                # Find image texture node
+                texture_image = None
+                for node in material.node_tree.nodes:
+                    if node.type == 'TEX_IMAGE' and node.image is not None:
+                        texture_image = node.image
+                        break
+                
+                if texture_image is None:
+                    continue
+                
+                # Create texture2d resource if not already created
+                if texture_image not in self.texture_to_resource_id:
+                    texture_id = str(self.next_resource_id)
+                    self.next_resource_id += 1
+                    self.texture_to_resource_id[texture_image] = texture_id
+                    
+                    # Determine texture filename and save to archive
+                    if texture_image.packed_file:
+                        # Image is packed in the blend file
+                        texture_filename = texture_image.name
+                        if not texture_filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            texture_filename += '.png'
+                        texture_data = texture_image.packed_file.data
+                    elif texture_image.filepath:
+                        # Image is external file
+                        texture_filename = os.path.basename(bpy.path.abspath(texture_image.filepath))
+                        # Save image to temp location and read it
+                        temp_path = bpy.path.abspath(texture_image.filepath)
+                        if os.path.exists(temp_path):
+                            with open(temp_path, 'rb') as img_file:
+                                texture_data = img_file.read()
+                        else:
+                            log.warning(f"Texture file not found: {texture_image.filepath}")
+                            continue
+                    else:
+                        log.warning(f"Texture {texture_image.name} has no source file")
+                        continue
+                    
+                    # Determine content type
+                    if texture_filename.lower().endswith('.png'):
+                        content_type = 'image/png'
+                    elif texture_filename.lower().endswith(('.jpg', '.jpeg')):
+                        content_type = 'image/jpeg'
+                    else:
+                        content_type = 'image/png'  # Default
+                    
+                    # Write texture to archive
+                    texture_path = f"{TEXTURE_FOLDER}/{texture_filename}"
+                    with archive.open(texture_path, 'w') as f:
+                        f.write(texture_data)
+                    
+                    # Create texture2d element
+                    texture2d_element = xml.etree.ElementTree.SubElement(
+                        resources_element,
+                        f"{{{MATERIAL_NAMESPACE}}}texture2d",
+                        attrib={
+                            f"{{{MODEL_NAMESPACE}}}id": texture_id,
+                            f"{{{MODEL_NAMESPACE}}}path": f"/{texture_path}",
+                            f"{{{MODEL_NAMESPACE}}}contenttype": content_type
+                        })
+                
+                # Create texture2dgroup for this material (will be populated with UV coords later)
+                # For now, we just mark that this material has textures
+                texture_group_id = str(self.next_resource_id)
+                self.next_resource_id += 1
+                self.material_to_texture_group_id[material.name] = (
+                    texture_group_id, 
+                    self.texture_to_resource_id[texture_image]
+                )
+
+    def write_objects(self, root, resources_element, blender_objects, global_scale, archive):
         """
         Writes a group of objects into the 3MF archive.
         :param root: An XML root element to write the objects into.
         :param resources_element: An XML element to write resources into.
         :param blender_objects: A list of Blender objects that need to be written to that XML element.
         :param global_scale: A scaling factor to apply to all objects to convert the units.
+        :param archive: The zip archive for writing additional resources.
         """
         transformation = mathutils.Matrix.Scale(global_scale, 4)
 
@@ -268,7 +370,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             if blender_object.type not in {'MESH', 'EMPTY'}:
                 continue
 
-            objectid, mesh_transformation = self.write_object_resource(resources_element, blender_object)
+            objectid, mesh_transformation = self.write_object_resource(resources_element, blender_object, archive)
 
             item_element = xml.etree.ElementTree.SubElement(build_element, f"{{{MODEL_NAMESPACE}}}item")
             self.num_written += 1
@@ -289,7 +391,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                     f"{{{MODEL_NAMESPACE}}}metadatagroup")
                 self.write_metadata(metadatagroup_element, metadata)
 
-    def write_object_resource(self, resources_element, blender_object):
+    def write_object_resource(self, resources_element, blender_object, archive):
         """
         Write a single Blender object and all of its children to the resources of a 3MF document.
 
@@ -299,6 +401,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         component of the object with components.
         :param resources_element: The <resources> element of the 3MF document to write into.
         :param blender_object: A Blender object to write to that XML element.
+        :param archive: The zip archive for writing additional resources.
         :return: A tuple, containing the object ID of the newly written resource and a transformation matrix that this
         resource must be saved with.
         """
@@ -328,7 +431,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 if child.type != 'MESH':
                     continue
                 # Recursively write children to the resources.
-                child_id, child_transformation = self.write_object_resource(resources_element, child)
+                child_id, child_transformation = self.write_object_resource(resources_element, child, archive)
                 # Use pseudo-inverse for safety, but the epsilon then doesn't matter since it'll get multiplied by 0
                 # later anyway then.
                 child_transformation = mesh_transformation.inverted_safe() @ child_transformation
@@ -381,7 +484,13 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             material_indices = [triangle.material_index for triangle in mesh.loop_triangles]
             # If there are no triangles, we provide 0 as index, but it'll not get read by write_triangles either then.
             most_common_material_list_index = 0
-
+            
+            # Check if the most common material has textures
+            has_textures = False
+            texture_group_id = None
+            texture2d_id = None
+            most_common_material = None
+            
             if material_indices and blender_object.material_slots:
                 counter = collections.Counter(material_indices)
                 # most_common_material_object_index is an index from the MeshLoopTriangle, referring to the list of
@@ -391,16 +500,47 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 # most_common_material_list_index is an index referring to our own list of materials that we put in the
                 # resources.
                 most_common_material_list_index = self.material_name_to_index[most_common_material.name]
-                # We always only write one group of materials. The resource ID was determined when it was written.
-                object_element.attrib[f"{{{MODEL_NAMESPACE}}}pid"] = str(self.material_resource_id)
-                object_element.attrib[f"{{{MODEL_NAMESPACE}}}pindex"] = str(most_common_material_list_index)
+                
+                # Check if this material has textures
+                if most_common_material.name in self.material_to_texture_group_id:
+                    has_textures = True
+                    texture_group_id, texture2d_id = self.material_to_texture_group_id[most_common_material.name]
+                else:
+                    # We always only write one group of materials. The resource ID was determined when it was written.
+                    object_element.attrib[f"{{{MODEL_NAMESPACE}}}pid"] = str(self.material_resource_id)
+                    object_element.attrib[f"{{{MODEL_NAMESPACE}}}pindex"] = str(most_common_material_list_index)
 
             self.write_vertices(mesh_element, mesh.vertices)
-            self.write_triangles(
-                mesh_element,
-                mesh.loop_triangles,
-                most_common_material_list_index,
-                blender_object.material_slots)
+            
+            # If textures are present, write texture2dgroup with UV coordinates
+            if has_textures and mesh.uv_layers:
+                uv_layer = mesh.uv_layers.active or mesh.uv_layers[0]
+                texture_group_element = self.write_texture2dgroup(
+                    resources_element, 
+                    texture_group_id, 
+                    texture2d_id, 
+                    mesh, 
+                    uv_layer
+                )
+                # Set object to use the texture2dgroup as property
+                object_element.attrib[f"{{{MODEL_NAMESPACE}}}pid"] = texture_group_id
+                object_element.attrib[f"{{{MODEL_NAMESPACE}}}pindex"] = "0"
+                
+                # Write triangles with texture coordinates
+                self.write_triangles_with_textures(
+                    mesh_element,
+                    mesh.loop_triangles,
+                    most_common_material_list_index,
+                    blender_object.material_slots,
+                    uv_layer)
+            else:
+                # Write triangles without textures (original behavior)
+                self.write_triangles(
+                    mesh_element,
+                    mesh.loop_triangles,
+                    most_common_material_list_index,
+                    blender_object.material_slots)
+
 
             # If the object has metadata, write that to a metadata object.
             if "3mf:partnumber" in metadata:
@@ -509,6 +649,94 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 if material_index != object_material_list_index:
                     # Not equal to the index that our parent object was written with, so we must override it here.
                     triangle_element.attrib[p1_name] = str(material_index)
+
+    def write_texture2dgroup(self, resources_element, group_id, texture_id, mesh, uv_layer):
+        """
+        Writes a texture2dgroup resource with UV coordinates from the mesh.
+        
+        :param resources_element: The <resources> element to write into.
+        :param group_id: The resource ID for this texture2dgroup.
+        :param texture_id: The resource ID of the texture2d this group refers to.
+        :param mesh: The mesh to extract UV coordinates from.
+        :param uv_layer: The UV layer to use.
+        :return: The created texture2dgroup element.
+        """
+        texture2dgroup_element = xml.etree.ElementTree.SubElement(
+            resources_element,
+            f"{{{MATERIAL_NAMESPACE}}}texture2dgroup",
+            attrib={
+                f"{{{MODEL_NAMESPACE}}}id": group_id,
+                f"{{{MODEL_NAMESPACE}}}texid": texture_id
+            })
+        
+        # Collect unique UV coordinates and create a mapping
+        # We need to write UV coords for each unique UV value
+        uv_to_index = {}
+        uv_index = 0
+        
+        for loop_tri in mesh.loop_triangles:
+            for loop_idx in loop_tri.loops:
+                uv = uv_layer.data[loop_idx].uv
+                uv_tuple = (round(uv.x, 6), round(uv.y, 6))  # Round to avoid floating point issues
+                if uv_tuple not in uv_to_index:
+                    uv_to_index[uv_tuple] = uv_index
+                    # Write tex2coord element
+                    tex2coord_element = xml.etree.ElementTree.SubElement(
+                        texture2dgroup_element,
+                        f"{{{MATERIAL_NAMESPACE}}}tex2coord",
+                        attrib={
+                            f"{{{MODEL_NAMESPACE}}}u": self.format_number(uv_tuple[0], 6),
+                            f"{{{MODEL_NAMESPACE}}}v": self.format_number(uv_tuple[1], 6)
+                        })
+                    uv_index += 1
+        
+        # Store the UV mapping for use in write_triangles_with_textures
+        self.uv_to_index = uv_to_index
+        
+        return texture2dgroup_element
+
+    def write_triangles_with_textures(self, mesh_element, triangles, object_material_list_index, material_slots, uv_layer):
+        """
+        Writes a list of triangles with texture coordinates into the specified mesh element.
+
+        This then becomes a resource that can be used in a build.
+        :param mesh_element: The <mesh> element of the 3MF document.
+        :param triangles: A list of triangles (MeshLoopTriangles).
+        :param object_material_list_index: The index of the material that the object was written with.
+        :param material_slots: List of materials belonging to the object.
+        :param uv_layer: The UV layer to get coordinates from.
+        """
+        triangles_element = xml.etree.ElementTree.SubElement(mesh_element, f"{{{MODEL_NAMESPACE}}}triangles")
+
+        # Precompute some names for better performance.
+        triangle_name = f"{{{MODEL_NAMESPACE}}}triangle"
+        v1_name = f"{{{MODEL_NAMESPACE}}}v1"
+        v2_name = f"{{{MODEL_NAMESPACE}}}v2"
+        v3_name = f"{{{MODEL_NAMESPACE}}}v3"
+        p1_name = f"{{{MODEL_NAMESPACE}}}p1"
+        p2_name = f"{{{MODEL_NAMESPACE}}}p2"
+        p3_name = f"{{{MODEL_NAMESPACE}}}p3"
+
+        for triangle in triangles:
+            triangle_element = xml.etree.ElementTree.SubElement(triangles_element, triangle_name)
+            triangle_element.attrib[v1_name] = str(triangle.vertices[0])
+            triangle_element.attrib[v2_name] = str(triangle.vertices[1])
+            triangle_element.attrib[v3_name] = str(triangle.vertices[2])
+
+            # Add UV coordinate indices
+            uv_indices = []
+            for loop_idx in triangle.loops:
+                uv = uv_layer.data[loop_idx].uv
+                uv_tuple = (round(uv.x, 6), round(uv.y, 6))
+                if uv_tuple in self.uv_to_index:
+                    uv_indices.append(self.uv_to_index[uv_tuple])
+                else:
+                    uv_indices.append(0)  # Fallback
+            
+            if len(uv_indices) == 3:
+                triangle_element.attrib[p1_name] = str(uv_indices[0])
+                triangle_element.attrib[p2_name] = str(uv_indices[1])
+                triangle_element.attrib[p3_name] = str(uv_indices[2])
 
     def format_number(self, number, decimals):
         """
