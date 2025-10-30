@@ -61,6 +61,25 @@ This add-on has been updated to be compatible with Blender 4.4+. It addresses th
 
 This add-on is released under the GNU General Public License version 2.0 or later.
 
+## Testing
+
+Comprehensive test plan and automated tests are provided:
+
+- **[TESTING.md](TESTING.md)** - Quick start guide for running tests
+- **[TEST_PLAN.md](TEST_PLAN.md)** - Detailed test cases and procedures
+- **test_texture_export.py** - Automated test suite (requires Blender)
+- **run_tests.sh** - Shell script to run tests
+
+To run automated tests:
+```bash
+./run_tests.sh
+```
+
+Or manually:
+```bash
+blender --background --python test_texture_export.py
+```
+
 ## Additional Documentation
 
 - See [TEXTURE_IMPLEMENTATION.md](TEXTURE_IMPLEMENTATION.md) for details on texture export functionality
