@@ -5,7 +5,8 @@ This add-on allows Blender to import and export 3MF files, a format used for 3D 
 ## Features
 
 - Import and export 3MF files to and from Blender
-- Supports materials and metadata
+- Supports materials, textures, and metadata
+- **NEW**: Texture export support with UV mapping (v1.1.3)
 - Compatible with Blender 2.80 through 4.4+
 - Handles meshes, colors, and transformations
 
@@ -43,6 +44,13 @@ This add-on has been updated to be compatible with Blender 4.4+. It addresses th
 
 ### Bugfixes
 
+#### v1.1.3
+- Added texture export support for 3MF files
+- Images from material texture nodes are now exported to the 3MF archive
+- UV coordinates are exported and mapped to triangles
+- Supports both packed and external texture images (PNG, JPEG)
+- Graceful fallback to color-only export when textures or UV maps are missing
+
 #### v1.1.2
 - Fixed TypeError error when importing 3MF files in Blender 4.4
 - Resolved issue with `Scene.name doesn't support None from string types` error by removing Title metadata from scene before storing
@@ -53,7 +61,30 @@ This add-on has been updated to be compatible with Blender 4.4+. It addresses th
 
 This add-on is released under the GNU General Public License version 2.0 or later.
 
+## Testing
+
+Comprehensive test plan and automated tests are provided:
+
+- **[TESTING.md](TESTING.md)** - Quick start guide for running tests
+- **[TEST_PLAN.md](TEST_PLAN.md)** - Detailed test cases and procedures
+- **test_texture_export.py** - Automated test suite (requires Blender)
+- **run_tests.sh** - Shell script to run tests
+
+To run automated tests:
+```bash
+./run_tests.sh
+```
+
+Or manually:
+```bash
+blender --background --python test_texture_export.py
+```
+
+## Additional Documentation
+
+- See [TEXTURE_IMPLEMENTATION.md](TEXTURE_IMPLEMENTATION.md) for details on texture export functionality
+
 ## Credits
 
 Original author: Ghostkeeper  
-Updated for Blender 4.4 compatibility
+Updated for Blender 4.4 compatibility and texture support
